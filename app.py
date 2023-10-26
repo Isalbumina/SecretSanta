@@ -2,50 +2,76 @@
 
 from flask import Flask, render_template, request, redirect, session, url_for
 import random
+import itertools
+import json
 
 app = Flask("SecretSanta")
 # Configure flask-session to store data in cookies
 app.config['SESSION_TYPE'] = 'filesystem'
 app.secret_key = 'bT!J12$wL@7&fA*8'  # Change this to a secure secret key
 
-# Define your list of participants here
-participants = ['Alice', 'Bob', 'Charlie', 'David', 'Eve', 'Frank']
+participants = ['Isabel', 'Raquel', 'Angel', 'Oscar', 'Tiama', 'Tioang', 'Tiaisa', 'Tioisi']
 
-# Define a function to randomize Secret Santa assignments
-# Set initial values as None if this is the first year
 previous_assignments = {
-    'Alice': None,
-    'Bob': None,
-    'Charlie': None,
-    'David': None,
-    'Eve': None,
-    'Frank': None
+    'Isabel': ['Tiama'],
+    'Raquel': ['Tioisi'],
+    'Angel': ['Tiaisa', 'Oscar'],
+    'Oscar': ['Tioang', 'Tiaisa'],
+    'Tiama': ['Oscar', 'Angel'],
+    'Tioang': ['Raquel'],
+    'Tiaisa': ['Isabel'],
+    'Tioisi': ['Angel', 'Tioang']
 }
+assignment_file = 'assignment.json'
 
-# Function to randomize assignments with exclusions
-def randomize_assignments(participants, previous_assignments):
-    assignments = participants.copy()
-    random.shuffle(assignments)
+def get_valid_assignments(participants, previous_assignments):
+    # Generate all possible permutations of participants
+    all_permutations = itertools.permutations(participants)
     
-    # Ensure that no one gets the same assignment as last year
-    for i in range(len(participants)):
-        if previous_assignments[participants[i]] == assignments[i]:
-            # Swap the assignment with someone else
-            j = (i + 1) % len(participants)
-            assignments[i], assignments[j] = assignments[j], assignments[i]
-    
-    return assignments
+    valid_permutations = []
 
-@app.route('/')
-def index():
-    # Check if a user is logged in
-    if 'username' in session:
-        return f"Welcome, {session['username']}! Click <a href='/secret-santa'>here</a> to see your Secret Santa assignment."
-    return "Welcome to the Secret Santa application! Please log in below:<br>" + \
-           "<form method='POST' action='/login'>" + \
-           "<input type='text' name='username' placeholder='Enter your name'>" + \
-           "<input type='submit' value='Log In'>" + \
-           "</form>"
+    for perm in all_permutations:
+        valid = True
+
+        for participant, gift in zip(participants, perm):
+            # Check if the participant is gifting to themselves
+            if participant == gift:
+                valid = False
+                break
+
+            # Check if the participant is gifting someone they've previously gifted
+            if gift in previous_assignments.get(participant, []):
+                valid = False
+                break
+        
+        # Check if every recipient is unique in a permutation
+        if len(set(perm)) != len(participants):
+            valid = False
+
+        # If the permutation passes all the checks, append it to the valid permutations list
+        if valid:
+            valid_permutations.append(perm)
+    
+    return valid_permutations
+
+# Function to select a random valid assignment and save it to a file
+def select_and_save_assignment(participants, previous_assignments):
+    valid_permutations = get_valid_assignments(participants, previous_assignments)
+    chosen_permutation = random.choice(valid_permutations)
+    
+    assignment = dict(zip(participants, chosen_permutation))
+    
+    with open(assignment_file, 'w') as f:
+        json.dump(assignment, f)
+
+# Function to load the assignment from the file
+def load_assignment():
+    try:
+        with open(assignment_file, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -59,9 +85,17 @@ def login():
 def secret_santa():
     if 'username' in session:
         username = session['username']
-        assignment = randomize_assignments(participants, previous_assignments)
-        return f"Hello, {username}! Your Secret Santa assignment is: {assignment[participants.index(username)]}"
+        assignment = load_assignment()
+        if username in assignment:
+            return render_template('assignments.html', participant_name=username, assignment=assignment[username])
+        else:
+            return "Assignments have not been made yet. Please check back later."
     return redirect(url_for('index'))
+
+@app.route('/generate-assignments', methods=['POST'])
+def generate_assignments():
+    select_and_save_assignment(participants, previous_assignments)
+    return "Assignments have been generated and saved."
 
 @app.route('/logout')
 def logout():
